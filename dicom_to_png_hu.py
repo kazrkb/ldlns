@@ -156,6 +156,42 @@ def save_mask_volume_as_nifti(npy_path, nii_path):
     nib.save(nii_img, nii_path)
     print(f"Saved mask volume as NIfTI file: {nii_path} (shape: {mask_volume.shape})")
 
+
+def find_nodule_bounding_boxes(mask_folder, output_csv="nodule_bboxes.csv", output_bbox_img_folder="NODULE_MASK_BBOX_IMAGES", tolerance=5):
+    """Find bounding boxes for nodules in mask images, expand by tolerance, save to CSV and images."""
+    import csv
+    if not os.path.exists(output_bbox_img_folder):
+        os.makedirs(output_bbox_img_folder, exist_ok=True)
+    mask_files = sorted([f for f in os.listdir(mask_folder) if f.lower().endswith('.png')])
+    bbox_list = []
+    for fname in mask_files:
+        mask_path = os.path.join(mask_folder, fname)
+        mask = imageio.imread(mask_path)
+        if mask.ndim > 2:
+            mask = mask[..., 0]
+        # Find contours (nodules)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        bbox_img = cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB)
+        for i, cnt in enumerate(contours):
+            x, y, w, h = cv2.boundingRect(cnt)
+            # Expand bbox by tolerance
+            min_x = max(x - tolerance, 0)
+            min_y = max(y - tolerance, 0)
+            max_x = min(x + w + tolerance, mask.shape[1])
+            max_y = min(y + h + tolerance, mask.shape[0])
+            bbox_list.append([fname, i, min_x, min_y, max_x, max_y])
+            # Draw rectangle on image
+            cv2.rectangle(bbox_img, (min_x, min_y), (max_x, max_y), (0,255,0), 2)
+        # Save image with bounding boxes
+        bbox_img_path = os.path.join(output_bbox_img_folder, fname)
+        plt.imsave(bbox_img_path, bbox_img)
+    # Save bounding boxes to CSV
+    with open(output_csv, "w", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["image", "nodule_id", "min_x", "min_y", "max_x", "max_y"])
+        writer.writerows(bbox_list)
+    print(f"Saved bounding boxes for {len(mask_files)} mask images to {output_csv} and images to {output_bbox_img_folder}")
+
 if __name__ == "__main__":
     input_folder = "INPUT"
     output_nodule_folder = "OUTPUT_NODULES"
@@ -174,3 +210,5 @@ if __name__ == "__main__":
         dicom_to_nodule_mask_images(input_folder, xml_path, mask_output_folder)
         create_nodule_mask_volume(mask_output_folder, mask_volume_npy)
         save_mask_volume_as_nifti(mask_volume_npy, mask_volume_nii)
+        # Find and save bounding boxes for nodules
+        find_nodule_bounding_boxes(mask_output_folder, tolerance=5)
